@@ -1,6 +1,12 @@
-import { Check } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
+"use client";
+
+import { Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Session } from "next-auth";
 
 const plans = [
   {
@@ -9,6 +15,7 @@ const plans = [
     price: "9",
     features: ["1 User", "10 GB Storage", "Basic Support"],
     popular: false,
+    id: "basic",
   },
   {
     name: "Pro",
@@ -16,6 +23,7 @@ const plans = [
     price: "49",
     features: ["5 Users", "100 GB Storage", "Priority Support", "Advanced Features"],
     popular: true,
+    id: "pro",
   },
   {
     name: "Enterprise",
@@ -23,12 +31,79 @@ const plans = [
     price: "99",
     features: ["Unlimited Users", "Unlimited Storage", "Dedicated Support", "All Features"],
     popular: false,
+    id: "enterprise",
   },
-]
+];
 
-export default function Pricing() {
+interface SessionWithAccessToken extends Session {
+  accessToken?: string;
+  refreshToken?: string;
+  error?: string;
+}
+
+export default function PricingPage() {
+  const { data: session, status } = useSession<SessionWithAccessToken>();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === "loading") return;
+
+    if (!session?.accessToken) {
+      // Redirect to login if not authenticated (handled by middleware)
+      router.push("/login"); // Or wherever your login page is
+    }
+  }, [session, router, status]);
+
+  const handleBuyPlan = async () => {
+    const priceId = "1"; // Hardcoded for now
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/api/v1/billing/checkout/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.accessToken}`,
+        },
+        body: JSON.stringify({ price_id: priceId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Error creating checkout session:", errorData);
+        // Handle error (e.g., display an error message)
+        return;
+      }
+
+      const data = await response.json();
+      const sessionId = data.sessionId;
+
+      // Redirect to Stripe Checkout
+      const stripePromise = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "");
+
+      if (stripePromise) {
+        const result = await stripePromise.redirectToCheckout({
+          sessionId: sessionId,
+        });
+
+        if (result.error) {
+          console.error("Stripe redirect error:", result.error.message);
+          // Handle redirect error (e.g., display an error message)
+        }
+      } else {
+        console.error("Stripe failed to load.");
+      }
+    } catch (error) {
+      console.error("Error during checkout:", error);
+      // Handle network or other errors
+    }
+  };
+
+  if (status === "loading") {
+    return <div>Loading...</div>;
+  }
+
   return (
-    <section id="pricing" className="w-full py-20 md:py-32">
+    <section className="w-full py-20 md:py-32">
       <div className="container">
         <div className="flex flex-col items-center text-center">
           <div className="text-[#10B981] font-medium mb-2">PRICING</div>
@@ -65,17 +140,17 @@ export default function Pricing() {
                 ))}
               </ul>
               <Button
-                asChild
                 className={`w-full ${
                   plan.popular ? "bg-[#10B981] hover:bg-[#10B981]/90" : "bg-gray-900 hover:bg-gray-800"
                 }`}
+                onClick={handleBuyPlan}
               >
-                <Link href="/signup">Get Started</Link>
+                Buy Now
               </Button>
             </div>
           ))}
         </div>
       </div>
     </section>
-  )
+  );
 }
